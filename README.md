@@ -35,16 +35,19 @@ the original `cli.py` entry point for upstream-compatible command-line use.
 
    ```bash
    .venv/bin/muse-mcp auth export
-   # or: .venv/bin/muse-mcp doctor
+   .venv/bin/muse-mcp doctor
    ```
+
+`doctor` only checks authentication and Muse status; it does not authenticate
+or export cookies. If authentication expires, rerun `muse-mcp auth export`
+while logged into Muse, then run `muse-mcp doctor` again.
 
 Cookies are stored at `~/.config/muse-cli/cookies.txt` with mode `0600`, and
 remain compatible with the existing `muse-cli` configuration. Access and
 gateway tokens are fetched for each gateway connection; they are not stored.
-Re-run `auth export` when authentication expires. Manual Netscape or
-`name=value; ...` cookie files are also supported if they contain `hatch_sess`.
-The export helper uses `agent-browser` to read the active logged-in Chrome
-session.
+Manual Netscape or `name=value; ...` cookie files are also supported if they
+contain `hatch_sess`. The export helper uses `agent-browser` to read the active
+logged-in Chrome session.
 
 ## Run the MCP server
 
@@ -91,15 +94,17 @@ entry is:
   dates, editions, source/URL metadata, and a redacted unit copy. `raw=true`
   exposes the expanded gateway response with credential-shaped fields redacted.
 - **`muse_raw(method, body?, path_params?, query_params?, timeout=30)`** — an
-  advanced escape hatch for one method validated against `routes.json`. Route
-  names and response shapes are unstable. Credential-shaped fields are
-  redacted, raw payloads are not logged, and binary bodies are omitted while
-  their size is reported.
+  advanced escape hatch for one method validated against `routes.json`. It is
+  disabled by default; set `MUSE_MCP_ENABLE_RAW=1` (or `"enable_raw": true` in
+  the compatible config) only for a trusted local orchestrator. Route names
+  and response shapes are unstable. Known credential-shaped fields, bearer
+  tokens, and obvious token assignments are redacted; binary bodies are
+  omitted while their size is reported.
 
 All errors use structured codes such as `AUTH_REQUIRED`, `VM_UNAVAILABLE`,
-`TIMEOUT`, `INVALID_THREAD`, `UNKNOWN_ROUTE`, and `GATEWAY_ERROR`. Authentication
-errors explain how to run `muse-mcp auth export` without exposing cookies or
-tokens.
+`TIMEOUT`, `INVALID_THREAD`, `UNKNOWN_ROUTE`, `RAW_DISABLED`, and
+`GATEWAY_ERROR`. Authentication errors explain how to run
+`muse-mcp auth export` without exposing cookies or tokens.
 
 Conceptually, a calling agent can select a configured side chat and delegate:
 
@@ -124,22 +129,29 @@ muse_send(
 
 ## Reliability and security
 
-- Each tool operation opens one gateway connection, and a process-wide lock
-  serializes complete operations. This deliberately prevents concurrent Noise
-  readers from corrupting state or stealing another request's frames. A long
-  `muse_send` wait blocks another operation until it completes.
+- Each MCP operation opens and closes its own Gateway. There is no
+  process-wide operation lock, so unrelated history/feed/status calls can run
+  while a long send waits. Each Gateway retains its own send/receive locks;
+  no Gateway is shared across concurrent MCP calls.
 - Genuine replies are discovered by polling scoped history. Assistant events
   with a new sequence and an empty `reply_to_message_id` are replies; proactive
   pushes are not treated as the delegated response.
-- Muse VMs can sleep, restart, or be temporarily unavailable. Retry a structured
-  `VM_UNAVAILABLE`; `muse-mcp wake` is available for a configured/known VM ID.
-- This server does not listen remotely, expose credentials, log cookies/tokens,
-  check out carts, place orders, send third-party messages, or make relevance
-  notifications. `muse_raw` is powerful and should only be enabled for a
-  trusted local calling agent.
-- Respect service rate limits. The gateway is reverse-engineered from the Muse
-  web bundle; protocol drift requires updating the upstream implementation and
-  `docs/PROTOCOL.md` from current behavior rather than guessing.
+- For long computer-use jobs, `fire_and_forget=true` confirms acceptance and
+  closes its Gateway without waiting for the final reply. Check that work later
+  with `muse_history`; a local timeout never cancels Muse's task.
+- Muse VMs can sleep, restart, or be temporarily unavailable. Retry a
+  structured `VM_UNAVAILABLE`; `muse-mcp wake` is available for a configured or
+  known VM ID. Other protocol failures remain `GATEWAY_ERROR`.
+- `muse_raw` is disabled by default and should only be enabled for a trusted
+  local orchestrator. Known credential-shaped fields, bearer tokens, and
+  obvious token assignments are redacted, but arbitrary route content (for
+  example file contents) cannot be guaranteed secret-free.
+- This server does not listen remotely, check out carts, place orders, send
+  third-party messages, or make relevance notifications.
+- `muse.py`, `cli.py`, `routes.json`, descriptors, and protocol notes originate
+  from `nikships/muse-cli` and should generally remain close to upstream.
+  Respect service rate limits and update protocol behavior from current Muse
+  observations rather than guessing.
 
 ## Development
 
@@ -149,11 +161,16 @@ Run the mocked MCP-layer tests without a Muse account:
 python -m unittest discover -s tests -v
 ```
 
-The tests cover thread filtering, scoped sends, genuine-reply selection,
-timeouts, history/feed metadata, raw-route validation, redaction, auth/VM
-errors, and serialized access. There is no automated live integration test;
-for a real smoke check, authenticate first and run `muse-mcp doctor` followed by
-an MCP client call to `muse_status`.
+After authenticating, run the low-risk live smoke path:
+
+```bash
+muse-mcp doctor
+python scripts/smoke_test.py
+```
+
+The smoke script only connects, fetches identity/status, lists sessions, and
+reads a small history window. It does not send messages or mutate Muse state.
+There is no automated live integration test.
 
 ## Layout
 
@@ -164,4 +181,4 @@ cli.py             preserved upstream CLI/auth/export implementation
 routes.json        internal gateway method table
 desc0.bin/desc1.bin protobuf framing descriptors
 docs/PROTOCOL.md   reverse-engineered protocol notes
-```
+scripts/           optional low-risk live smoke command

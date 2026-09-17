@@ -2,7 +2,7 @@
 # muse-mcp installer: local MCP server plus authentication/setup helpers.
 set -u
 
-REPO_URL="${MUSE_MCP_REPO:-${MUSE_CLI_REPO:-https://github.com/nikships/muse-mcp.git}}"
+REPO_URL="${MUSE_MCP_REPO:-${MUSE_CLI_REPO:-https://github.com/kleprevost/muse-mcp.git}}"
 DEST="${MUSE_MCP_DIR:-${MUSE_CLI_DIR:-$HOME/muse-mcp}}"
 BIN_DIR="${MUSE_MCP_BIN:-${MUSE_CLI_BIN:-$HOME/bin}}"
 BIN_NAME="muse-mcp"

@@ -72,6 +72,11 @@ class GatewayError(RuntimeError):
         self.status = status
         self.payload = payload
 
+class VMUnavailableError(GatewayError):
+    """Muse explicitly reported that VM resolution is temporarily unavailable."""
+
+    pass
+
 
 def _hatch_headers(cookies, access_token=None):
     h = {
@@ -147,21 +152,25 @@ def load_cookies(path):
 
 
 def fetch_session_info(cookies):
+    """Discover the user's assigned personal VM (id + gateway URL)."""
     r = _require_http().get("https://muse.ai/api/session", headers=_hatch_headers(cookies),
-               impersonate="chrome", timeout=20)
+                            impersonate="chrome", timeout=20)
     if r.status_code != 200:
         raise AuthError(f"api/session -> {r.status_code} (cookies expired? re-export)")
     try:
         info = r.json()
     except ValueError:
         raise AuthError(f"api/session returned non-JSON ({r.text[:80]!r})")
+    if (
+        info.get("status") == "unavailable"
+        and isinstance(info.get("vm_resolution_issue"), dict)
+        and info["vm_resolution_issue"].get("kind") == "retryable"
+    ):
+        raise VMUnavailableError(-1, "Muse VM resolution is temporarily unavailable")
     if "vm_id" not in info:
-        # The VM is down/restarting: {"status":"unavailable",
-        # "vm_resolution_issue":{"kind":"retryable"}}. Not an auth problem,
-        # so say so: retry, or wake a known VM id directly.
-        raise GatewayError(-1, f"VM unavailable ({info!r}); retry shortly or "
-                               "`MUSE_VM_ID=<id> muse-cli wake`")
+        raise GatewayError(-1, "session response did not include vm_id")
     return info
+
 
 
 class Gateway:
@@ -180,6 +189,8 @@ class Gateway:
         self.ws.connect(url, impersonate="chrome", timeout=20)
         noise = NoiseConnection.from_name(b"Noise_XX_25519_AESGCM_SHA256")
         noise.set_as_initiator()
+        noise.set_keypair_from_private_bytes(Keypair.STATIC, os.urandom(32))
+        noise.start_handshake()
         self.ws.send_bytes(bytes(noise.write_message(b"")))
         m2, _ = self.ws.recv()
         noise.read_message(bytes(m2))

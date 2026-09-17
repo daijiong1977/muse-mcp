@@ -2,14 +2,14 @@
 
 import json
 import re
-import threading
+import os
 import time
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from cli import is_reply
-from muse import AuthError, Gateway, GatewayError, ROUTES, load_cookies
+from muse import AuthError, Gateway, GatewayError, ROUTES, VMUnavailableError, load_cookies
 
 from .config import load_config, resolve_thread
 
@@ -75,19 +75,18 @@ def _exception_error(exc: Exception, thread: Optional[str] = None) -> Dict[str, 
         return _error("INVALID_ARGUMENT", str(exc))
     if isinstance(exc, TimeoutError):
         return _error("TIMEOUT", "Muse did not respond before the gateway timeout.")
+    if isinstance(exc, VMUnavailableError):
+        return _error(
+            "VM_UNAVAILABLE",
+            "Muse's VM resolution is temporarily unavailable. Retry after it becomes available; `muse-mcp wake` can wake a known VM.",
+        )
     if isinstance(exc, GatewayError):
         status = getattr(exc, "status", None)
-        if status == -1 or status in (502, 503, 504):
-            return _error(
-                "VM_UNAVAILABLE",
-                "Muse's VM is sleeping, restarting, or unreachable. Retry after it becomes available; `muse-mcp wake` can wake a known VM.",
-                status=status,
-            )
         if thread and status in (400, 404):
             return _error("INVALID_THREAD", "Muse rejected the requested thread.", status=status)
         return _error("GATEWAY_ERROR", "Muse gateway request failed.", status=status)
     if isinstance(exc, (OSError, ConnectionError)):
-        return _error("VM_UNAVAILABLE", "Muse's gateway connection is unavailable.")
+        return _error("GATEWAY_ERROR", "Muse gateway connection failed.")
     return _error("GATEWAY_ERROR", "Muse gateway operation failed.")
 
 
@@ -132,12 +131,10 @@ def _event_row(event: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class MuseClient:
-    """Serialize complete gateway operations to avoid Noise reader races.
+    """Adapter where each invocation owns one independent Gateway instance.
 
-    A gateway is opened and closed for each operation. The lock also covers a
-    long ``muse_send`` poll, which is intentionally conservative: one logical
-    frame consumer exists at a time and concurrent calls cannot corrupt Noise
-    state or misroute responses.
+    Gateway send/receive locks still protect one Noise connection. No lock is
+    shared across MCP calls, so long-running sends do not block other tools.
     """
 
     def __init__(
@@ -147,7 +144,6 @@ class MuseClient:
     ) -> None:
         self._config_loader = config_loader
         self._gateway_factory = gateway_factory or Gateway
-        self._lock = threading.Lock()
 
     @contextmanager
     def _gateway(self, config: Dict[str, Any]) -> Iterator[Any]:
@@ -168,13 +164,12 @@ class MuseClient:
                 pass
 
     def _execute(self, operation: Callable[[Any, Dict[str, Any]], Any], thread: Optional[str] = None) -> Any:
-        with self._lock:
-            try:
-                config = self._config_loader()
-                with self._gateway(config) as gateway:
-                    return operation(gateway, config)
-            except Exception as exc:
-                return _exception_error(exc, thread=thread)
+        try:
+            config = self._config_loader()
+            with self._gateway(config) as gateway:
+                return operation(gateway, config)
+        except Exception as exc:
+            return _exception_error(exc, thread=thread)
 
     def status(self) -> Dict[str, Any]:
         def operation(gateway: Any, _config: Dict[str, Any]) -> Dict[str, Any]:
@@ -346,6 +341,21 @@ class MuseClient:
         query_params: Optional[Dict[str, Any]] = None,
         timeout: float = 30,
     ) -> Any:
+        try:
+            config = self._config_loader()
+        except Exception as exc:
+            return _exception_error(exc)
+        raw_flag = os.environ.get("MUSE_MCP_ENABLE_RAW")
+        enabled = (
+            raw_flag.strip().lower() in ("1", "true", "yes", "on")
+            if raw_flag is not None
+            else bool(config.get("enable_raw", False))
+        )
+        if not enabled:
+            return _error(
+                "RAW_DISABLED",
+                "muse_raw is disabled. Set MUSE_MCP_ENABLE_RAW=1 for this trusted local MCP server.",
+            )
         if not isinstance(method, str) or not method:
             return _error("UNKNOWN_ROUTE", "A route method name is required.")
         if method not in ROUTES:

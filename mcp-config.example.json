@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "muse": {
+      "command": "/absolute/path/to/muse-mcp/.venv/bin/muse-mcp",
+      "args": []
+    }
+  }
+}

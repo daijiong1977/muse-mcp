@@ -1,13 +1,12 @@
 #!/usr/bin/env bash
-# muse-cli installer: CLI + agent skill, powered by uv. No browser needed afterwards.
-# Usage: curl -fsSL https://raw.githubusercontent.com/nikships/muse-cli/main/install.sh | bash
+# muse-mcp installer: local MCP server plus authentication/setup helpers.
 set -u
 
-REPO_URL="${MUSE_CLI_REPO:-https://github.com/nikships/muse-cli.git}"
-DEST="${MUSE_CLI_DIR:-$HOME/muse-cli}"
-BIN_DIR="${MUSE_CLI_BIN:-$HOME/bin}"
-BIN_NAME="muse-cli"   # 'muse' clashes with Muse Code, don't use it
-SKILL_DIR="${MUSE_CLI_SKILLS:-$HOME/.agents/skills}"
+REPO_URL="${MUSE_MCP_REPO:-${MUSE_CLI_REPO:-https://github.com/nikships/muse-mcp.git}}"
+DEST="${MUSE_MCP_DIR:-${MUSE_CLI_DIR:-$HOME/muse-mcp}}"
+BIN_DIR="${MUSE_MCP_BIN:-${MUSE_CLI_BIN:-$HOME/bin}}"
+BIN_NAME="muse-mcp"
+SKILL_DIR="${MUSE_MCP_SKILLS:-${MUSE_CLI_SKILLS:-$HOME/.agents/skills}}"
 
 fail() { echo "install failed: $1" >&2; exit 1; }
 
@@ -35,25 +34,29 @@ if [ ! -x "$DEST/.venv/bin/python" ]; then
 fi
 uv pip install --python "$DEST/.venv/bin/python" -r "$DEST/requirements.txt" \
   || fail "uv pip install failed"
+uv pip install --python "$DEST/.venv/bin/python" -e "$DEST" \
+  || fail "muse-mcp package install failed"
 
 mkdir -p "$BIN_DIR"
-rm -f "$BIN_DIR/$BIN_NAME"   # may be a stale symlink into the repo; cat would follow it
+rm -f "$BIN_DIR/$BIN_NAME"
 cat > "$BIN_DIR/$BIN_NAME" <<EOF
 #!/usr/bin/env bash
-exec "$DEST/.venv/bin/python" "$DEST/cli.py" "\$@"
+exec "$DEST/.venv/bin/python" -m muse_mcp.cli "\$@"
 EOF
 chmod +x "$BIN_DIR/$BIN_NAME"
 echo "launcher installed at $BIN_DIR/$BIN_NAME"
 
-mkdir -p "$SKILL_DIR/muse-cli"
-cp -r "$DEST/skills/muse-cli/." "$SKILL_DIR/muse-cli/"
-echo "skill installed at $SKILL_DIR/muse-cli"
+if [ -d "$DEST/skills/muse-cli" ]; then
+  mkdir -p "$SKILL_DIR/muse-cli"
+  cp -r "$DEST/skills/muse-cli/." "$SKILL_DIR/muse-cli/"
+  echo "skill installed at $SKILL_DIR/muse-cli"
+fi
 
 echo
 echo "Next steps:"
 echo "  1. Log in to https://muse.ai/ in Chrome"
 echo "  2. $BIN_NAME auth export"
-echo "  3. $BIN_NAME status"
+echo "  3. $BIN_NAME doctor"
 case ":$PATH:" in
   *":$BIN_DIR:"*) ;;
   *) echo "NOTE: $BIN_DIR is not on your PATH; add it or run $BIN_DIR/$BIN_NAME" ;;

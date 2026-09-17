@@ -12,9 +12,17 @@ import time
 import urllib.parse
 import uuid
 import queue as queue_mod
+import sys
 
-from curl_cffi import requests as rq
-from curl_cffi.requests import WebSocket
+try:
+    from curl_cffi import requests as rq
+    from curl_cffi.requests import WebSocket
+except (ImportError, OSError) as _curl_error:
+    # Keep command/schema imports usable so callers receive a structured
+    # authentication/gateway error instead of an import-time crash.
+    rq = None
+    WebSocket = None
+    _CURL_IMPORT_ERROR = _curl_error
 from noise.connection import NoiseConnection, Keypair
 from google.protobuf import descriptor_pb2, descriptor_pool, message_factory
 
@@ -23,10 +31,17 @@ UA = ("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
       "(KHTML, like Gecko) Chrome/153.0.0.0 Safari/537.36")
 GATEWAY_HOST = "hatch.metaaivm.com"
 
+def _asset_path(name):
+    for base in (_HERE, sys.prefix, sys.base_prefix, os.getcwd()):
+        candidate = os.path.join(base, name)
+        if os.path.isfile(candidate):
+            return candidate
+    raise FileNotFoundError(f"Muse protocol asset not found: {name}")
+
 _pool = descriptor_pool.DescriptorPool()
 for _i in (0, 1):
     _fd = descriptor_pb2.FileDescriptorProto()
-    with open(os.path.join(_HERE, f"desc{_i}.bin"), "rb") as fh:
+    with open(_asset_path(f"desc{_i}.bin"), "rb") as fh:
         _fd.ParseFromString(fh.read())
     _pool.Add(_fd)
 
@@ -41,7 +56,7 @@ ServiceResponse = _msg("hatch.noise.ServiceResponse")
 ServiceFrame = _msg("hatch.noise.ServiceFrame")
 ApplicationRequest = _msg("hatch.noise.ApplicationRequest")
 
-with open(os.path.join(_HERE, "routes.json")) as fh:
+with open(_asset_path("routes.json"), encoding="utf-8") as fh:
     ROUTES = {e["method"]: e for e in json.load(fh)}
 
 SERVICE_IDS = {"daemon": 0, "sentinel": 1, "vault": 2, "authd": 3}
@@ -68,15 +83,20 @@ def _hatch_headers(cookies, access_token=None):
         "Sec-Fetch-Dest": "empty",
         "Accept": "application/json",
         "Content-Type": "application/json",
+
         "Cookie": cookies,
     }
     if access_token:
         h["Authorization"] = f"Bearer {access_token}"
     return h
+def _require_http():
+    if rq is None or WebSocket is None:
+        raise AuthError("curl_cffi is unavailable; reinstall the project dependencies")
+    return rq
 
 
 def fetch_access_token(cookies):
-    r = rq.post("https://muse.ai/api/auth/check", headers=_hatch_headers(cookies),
+    r = _require_http().post("https://muse.ai/api/auth/check", headers=_hatch_headers(cookies),
                 data=b"", impersonate="chrome", timeout=20)
     if r.status_code != 200:
         raise AuthError(f"auth/check -> {r.status_code} {r.text[:120]} (cookies expired? re-export)")
@@ -84,7 +104,7 @@ def fetch_access_token(cookies):
 
 
 def fetch_hatch_token(cookies, access_token, vm_id):
-    r = rq.post(
+    r = _require_http().post(
         "https://muse.ai/api/hatch/token",
         headers=_hatch_headers(cookies, access_token),
         json={"vmAddress": f"wss://{vm_id}.metaaivm.com/", "vmName": vm_id},
@@ -97,7 +117,8 @@ def fetch_hatch_token(cookies, access_token, vm_id):
 
 def load_cookies(path):
     """Accept a curl-style 'a=b; c=d' file or {"cookies": {...}} JSON."""
-    raw = open(path).read().strip()
+    with open(path, encoding="utf-8") as fh:
+        raw = fh.read().strip()
     if raw.startswith("{"):
         try:
             d = json.loads(raw)
@@ -126,8 +147,7 @@ def load_cookies(path):
 
 
 def fetch_session_info(cookies):
-    """Discover the user's assigned personal VM (id + gateway URL)."""
-    r = rq.get("https://muse.ai/api/session", headers=_hatch_headers(cookies),
+    r = _require_http().get("https://muse.ai/api/session", headers=_hatch_headers(cookies),
                impersonate="chrome", timeout=20)
     if r.status_code != 200:
         raise AuthError(f"api/session -> {r.status_code} (cookies expired? re-export)")
@@ -155,12 +175,11 @@ class Gateway:
         hatch_token = hatch_token or fetch_hatch_token(cookies, access_token, vm_id)
         url = (f"wss://{GATEWAY_HOST}/v1/noise?vm_id={vm_id}"
                f"&auth_token={urllib.parse.quote(hatch_token, safe='')}")
+        _require_http()
         self.ws = WebSocket()
         self.ws.connect(url, impersonate="chrome", timeout=20)
         noise = NoiseConnection.from_name(b"Noise_XX_25519_AESGCM_SHA256")
         noise.set_as_initiator()
-        noise.set_keypair_from_private_bytes(Keypair.STATIC, os.urandom(32))
-        noise.start_handshake()
         self.ws.send_bytes(bytes(noise.write_message(b"")))
         m2, _ = self.ws.recv()
         noise.read_message(bytes(m2))

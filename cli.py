@@ -13,33 +13,10 @@ import os
 import sys
 import time
 
+from muse_mcp.config import CONFIG_DIR, COOKIES_FILE, load_config
+
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from muse import Gateway, AuthError, GatewayError, load_cookies  # noqa: E402
-
-CONFIG_DIR = os.path.expanduser("~/.config/muse-cli")
-CONFIG_FILE = os.path.join(CONFIG_DIR, "config.json")
-COOKIES_FILE = os.path.join(CONFIG_DIR, "cookies.txt")
-
-
-def load_config():
-    import secrets
-    cfg = {}
-    if os.path.exists(CONFIG_FILE):
-        cfg = json.load(open(CONFIG_FILE))
-    changed = False
-    cfg.setdefault("cookies_file", COOKIES_FILE)
-    if "vm_id" not in cfg and os.environ.get("MUSE_VM_ID"):
-        cfg["vm_id"] = os.environ["MUSE_VM_ID"]
-    if "node_id" not in cfg:
-        if os.environ.get("MUSE_NODE_ID"):
-            cfg["node_id"] = os.environ["MUSE_NODE_ID"]
-        else:
-            cfg["node_id"] = secrets.token_hex(8)
-            changed = True
-    if changed:
-        os.makedirs(CONFIG_DIR, exist_ok=True)
-        json.dump(cfg, open(CONFIG_FILE, "w"), indent=2)
-    return cfg
 
 
 def connect(cfg):
@@ -472,6 +449,7 @@ def main():
     a.add_parser("export", help="export Chrome session cookies for the CLI").set_defaults(fn=cmd_auth_export)
 
     sub.add_parser("status", help="VM, session count, unread, identity").set_defaults(fn=cmd_status)
+    sub.add_parser("doctor", help="check Muse authentication and VM status").set_defaults(fn=cmd_status)
     p = sub.add_parser("threads", help="list chats and side chats")
     p.add_argument("--all", dest="archived", action="store_true", help="include archived")
     p.set_defaults(fn=cmd_threads)

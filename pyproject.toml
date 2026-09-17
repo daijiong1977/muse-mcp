@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "muse-mcp"
+version = "0.1.0"
+description = "Local MCP server for delegating work to a personal Muse agent"
+requires-python = ">=3.10"
+dependencies = [
+  "curl_cffi>=0.11",
+  "noiseprotocol>=0.3",
+  "protobuf>=5.0",
+  "mcp>=1.0,<2",
+]
+
+[project.scripts]
+muse-mcp = "muse_mcp.cli:main"
+
+[tool.setuptools]
+packages = ["muse_mcp"]
+py-modules = ["cli", "muse"]
+include-package-data = true
+
+[tool.setuptools.data-files]
+"." = ["routes.json", "desc0.bin", "desc1.bin"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

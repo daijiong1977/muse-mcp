@@ -261,13 +261,18 @@ class MuseClient:
                 events = history.get("chat_events", []) if isinstance(history, dict) else []
                 if events:
                     baseline = max((event.get("seq", 0) or 0) for event in events if isinstance(event, dict))
-            except (GatewayError, TimeoutError):
+            except TimeoutError:
+                # A read timeout is transient; the send can still be dispatched.
                 pass
+            except GatewayError:
+                raise
 
             stream_id = gateway._open("chat.stream", body=params)
             result: Dict[str, Any] = {"ok": True, "sent": True, "stream_id": stream_id}
             if fire_and_forget or wait_seconds == 0:
                 result["waiting"] = False
+                result["acknowledged"] = False
+                result["note"] = "request dispatched; inspect muse_history for progress or completion"
                 return result
 
             timeout = 90 if wait_seconds is None else float(wait_seconds)
@@ -283,15 +288,19 @@ class MuseClient:
                         if is_reply(event, baseline):
                             result["reply"] = _event_row(event)
                             return result
-                except (GatewayError, TimeoutError):
+                except TimeoutError:
+                    # Polling timeouts are transient; keep waiting until the caller's deadline.
                     pass
+                except GatewayError:
+                    raise
                 remaining = deadline - time.monotonic()
                 if remaining > 0:
                     time.sleep(min(4.0, remaining))
             result["ok"] = False
+            result["acknowledged"] = False
             result["error"] = {
                 "code": "TIMEOUT",
-                "message": "Muse accepted the message but no genuine assistant reply arrived before the requested timeout.",
+                "message": "Muse request was dispatched, but no genuine assistant reply arrived before the requested timeout.",
                 "wait_seconds": timeout,
             }
             result["waiting"] = True

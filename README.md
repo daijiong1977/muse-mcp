@@ -27,6 +27,12 @@ uv pip install --python .venv/bin/python -e .
 The package installs the `muse-mcp` console command. The repository also keeps
 the original `cli.py` entry point for upstream-compatible command-line use.
 
+Chrome cookie export requires the external `agent-browser` executable:
+
+```bash
+npm i -g agent-browser
+```
+
 ## Authenticate with Chrome
 
 1. Log in to `https://muse.ai/` in Chrome.
@@ -136,9 +142,10 @@ muse_send(
 - Genuine replies are discovered by polling scoped history. Assistant events
   with a new sequence and an empty `reply_to_message_id` are replies; proactive
   pushes are not treated as the delegated response.
-- For long computer-use jobs, `fire_and_forget=true` confirms acceptance and
-  closes its Gateway without waiting for the final reply. Check that work later
-  with `muse_history`; a local timeout never cancels Muse's task.
+- For long computer-use jobs, `fire_and_forget=true` dispatches the request and
+  closes its Gateway without waiting for completion. It does not provide a
+  protocol-level acceptance acknowledgement; check later with `muse_history`.
+  A local timeout never cancels Muse's task.
 - Muse VMs can sleep, restart, or be temporarily unavailable. Retry a
   structured `VM_UNAVAILABLE`; `muse-mcp wake` is available for a configured or
   known VM ID. Other protocol failures remain `GATEWAY_ERROR`.
@@ -182,3 +189,4 @@ routes.json        internal gateway method table
 desc0.bin/desc1.bin protobuf framing descriptors
 docs/PROTOCOL.md   reverse-engineered protocol notes
 scripts/           optional low-risk live smoke command
+```

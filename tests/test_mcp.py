@@ -1,11 +1,15 @@
+import io
 import json
 import os
 import tempfile
 import threading
 import time
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from unittest.mock import patch
+
+import cli
 
 from muse import AuthError, GatewayError, VMUnavailableError
 from muse_mcp.client import MuseClient
@@ -68,6 +72,15 @@ class MCPClientTests(unittest.TestCase):
             gateway_factory=lambda *a, **k: gateway,
         )
 
+
+    def test_auth_export_reports_missing_agent_browser(self):
+        stderr = io.StringIO()
+        with patch.object(cli.shutil, "which", return_value=None), redirect_stderr(stderr):
+            with self.assertRaises(SystemExit) as exited:
+                cli.cmd_auth_export(None)
+        self.assertEqual(exited.exception.code, 1)
+        self.assertIn("npm i -g agent-browser", stderr.getvalue())
+
     def test_threads_filter_and_shape(self):
         gateway = FakeGateway(responses={"sessions.list": {"sessions": [
             {"session_id": "one", "title": "One", "pinned": True, "archived": False, "updated_at_ms": 1700000000000},
@@ -104,6 +117,38 @@ class MCPClientTests(unittest.TestCase):
         self.assertEqual(result["reply"]["text"], "done")
         self.assertEqual(gateway.opened[0][1]["session_id"], "thread-1")
 
+    def test_send_invalid_thread_is_structured(self):
+        class InvalidThreadGateway(FakeGateway):
+            def call_json(self, method, body=None, query=None, timeout=30):
+                if method == "chat.history":
+                    raise GatewayError(404, "missing thread")
+                return super().call_json(method, body=body, query=query, timeout=timeout)
+
+        gateway = InvalidThreadGateway()
+        client = self.make_client(gateway)
+        result = client.send("research", thread="missing", fire_and_forget=True)
+        self.assertEqual(result["error"]["code"], "INVALID_THREAD")
+        self.assertEqual(gateway.opened, [])
+
+    def test_send_poll_gateway_failure_is_not_timeout(self):
+        class PollFailureGateway(FakeGateway):
+            def __init__(self):
+                super().__init__()
+                self.history_calls = 0
+
+            def call_json(self, method, body=None, query=None, timeout=30):
+                if method == "chat.history":
+                    self.history_calls += 1
+                    if self.history_calls == 1:
+                        return {"chat_events": [{"seq": 1}]}
+                    raise GatewayError(-1, "stream reset")
+                return super().call_json(method, body=body, query=query, timeout=timeout)
+
+        gateway = PollFailureGateway()
+        client = self.make_client(gateway)
+        result = client.send("research", wait_seconds=10)
+        self.assertEqual(result["error"]["code"], "GATEWAY_ERROR")
+
     def test_send_timeout_is_structured(self):
         gateway = FakeGateway(history=[{"chat_events": [{"seq": 1}]}])
         client = self.make_client(gateway)
@@ -111,6 +156,8 @@ class MCPClientTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["error"]["code"], "TIMEOUT")
         self.assertTrue(result["sent"])
+        self.assertFalse(result["acknowledged"])
+        self.assertIn("dispatched", result["error"]["message"])
 
     def test_fire_and_forget_confirms_send_and_closes_gateway(self):
         gateway = FakeGateway(history=[{"chat_events": [{"seq": 1}]}])
@@ -119,6 +166,8 @@ class MCPClientTests(unittest.TestCase):
         self.assertEqual(result["ok"], True)
         self.assertEqual(result["sent"], True)
         self.assertEqual(result["waiting"], False)
+        self.assertFalse(result["acknowledged"])
+        self.assertIn("dispatched", result["note"])
         self.assertTrue(gateway.closed)
 
     def test_arbitrary_raw_content_is_not_claimed_secret_free(self):

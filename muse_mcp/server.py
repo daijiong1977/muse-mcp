@@ -12,7 +12,7 @@ _client = MuseClient()
 
 
 def get_client() -> MuseClient:
-    """Return the process-wide client; operations are serialized by the client."""
+    """Return the client; each invocation uses an independent Gateway."""
     return _client
 
 

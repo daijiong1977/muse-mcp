@@ -10,6 +10,7 @@ Then: muse-cli status | muse-cli threads | muse-cli history | muse-cli send "hel
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 
@@ -74,6 +75,9 @@ def _browser_cookies(headed):
 
 
 def cmd_auth_export(_args):
+    if shutil.which("agent-browser") is None:
+        print("auth export requires agent-browser; install it with `npm i -g agent-browser`", file=sys.stderr)
+        sys.exit(1)
     os.makedirs(CONFIG_DIR, exist_ok=True)
     jar, err = _browser_cookies(headed=True)
     if jar is None and err != "no muse.ai tab open in Chrome":

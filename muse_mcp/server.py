@@ -1,6 +1,6 @@
 """Official MCP stdio server exposing a small Muse primitive surface."""
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict, List, Optional
 
 from mcp.server.fastmcp import FastMCP
 
@@ -34,18 +34,23 @@ def muse_send(
     thread: Optional[str] = None,
     wait_seconds: Optional[float] = 90,
     fire_and_forget: bool = False,
+    images: Optional[List[str]] = None,
 ) -> Any:
     """Send natural-language work to Muse and optionally wait for its genuine reply.
 
     Thread may be a session ID or a configured alias. A wait timeout is not a
     workflow limit; long browser tasks may use several minutes or more. Set
     fire_and_forget to return after the gateway accepts the message.
+    Images are local paths on the server's machine (PNG/JPEG/GIF/WebP),
+    uploaded inline with the message. Up to 10 images, 10 MiB combined.
+    Image-only messages may use an empty message string. No browser is needed.
     """
     return get_client().send(
         message=message,
         thread=thread,
         wait_seconds=wait_seconds,
         fire_and_forget=fire_and_forget,
+        images=images,
     )
 
 

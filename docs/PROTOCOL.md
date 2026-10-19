@@ -77,3 +77,36 @@ chat / feed / goals / ideas / sessions / ...
 - `auth export` must focus a muse.ai tab before reading cookies (the export
   follows the active tab) and must never overwrite a working jar without a
   `hatch_sess` in the new one.
+
+## Inline image messages and outbound chunking
+
+Observed in the authenticated web client on October 19, 2026:
+
+- `buildAttachmentItems` in `1laddrc1u-40u.js` builds image items as
+  `{type: "image", mime_type, data_base64, filename}`. The Base64 value is
+  the file bytes, without a data-URL prefix. Image items precede the optional
+  `{type: "text", text}` item in the `chat.stream` request's `items` array.
+- `1zugn822d-ccd.js` sends that array with `node_id`, `capabilities`, and an
+  optional `session_id`. Images use inline data; the separate `fs.write` /
+  `file_ref` path is used for some other attachment categories.
+- `NoiseTransport` in `1ruwv6kaus98p.js` splits the serialized
+  **ServiceRequest**, not its individual application body, into payloads of
+  at most **65,489 bytes**, with at most **256 chunks**. All chunks share one
+  signed int64 `chunk_id`, use zero-based `chunk_index`, and carry the same
+  `total_chunks`. Each NoiseTransportFrame is encrypted separately and sent
+  as its own WebSocket binary message. Keep the send lock across the entire
+  envelope to preserve cipher nonce ordering.
+- The client limits attached image bytes to 10 MiB combined so Base64 and
+  framing fit below this transport ceiling. The final serialized envelope
+  is also checked before sending any chunks. Inbound response reassembly
+  remains unchanged; this change implements outbound request chunking only.
+
+These bundle names identify the observed implementation, not a stable API.
+Recheck current web-client behavior if image sends stop working.
+
+Live verification on October 19, 2026: the CLI sent one 214,884-byte PNG and
+the MCP stdio `muse_send` tool sent two PNGs totaling 429,929 bytes in a
+dedicated side chat. Muse correctly identified the shapes/colors in the CLI
+image and both MCP images in attachment order. Both requests exceeded the old
+single-frame limit and used outbound chunking. Authentication/configuration
+files were unchanged. No generation or image-edit request was made.

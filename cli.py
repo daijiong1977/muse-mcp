@@ -15,6 +15,7 @@ import sys
 import time
 
 from muse_mcp.config import CONFIG_DIR, COOKIES_FILE, load_config
+from muse_mcp.attachments import build_message_items
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from muse import Gateway, AuthError, GatewayError, load_cookies  # noqa: E402
@@ -191,10 +192,11 @@ def is_reply(ev, baseline):
 
 
 def cmd_send(args):
+    items = build_message_items(args.text, getattr(args, "images", None))
     cfg = load_config()
     gw = connect(cfg)
     try:
-        params = {"items": [{"type": "text", "text": args.text}],
+        params = {"items": items,
                   "node_id": cfg["node_id"], "capabilities": {}}
         if args.thread:
             params["session_id"] = args.thread
@@ -461,7 +463,9 @@ def main():
     p.add_argument("--thread", default=None); p.add_argument("--limit", type=int, default=10)
     p.add_argument("--raw", action="store_true"); p.set_defaults(fn=cmd_history)
     p = sub.add_parser("send", help="send the agent a message")
-    p.add_argument("text"); p.add_argument("--thread", default=None)
+    p.add_argument("text", nargs="?", default=""); p.add_argument("--thread", default=None)
+    p.add_argument("--image", dest="images", action="append", default=[], metavar="PATH",
+                   help="attach a local PNG/JPEG/GIF/WebP (repeatable; 10 images, 10 MiB total)")
     p.add_argument("--wait", type=int, default=90, help="seconds to wait for reply (0 = don't)")
     p.set_defaults(fn=cmd_send)
     p = sub.add_parser("watch", help="tail live agent events")
@@ -512,6 +516,9 @@ def main():
     except TimeoutError as e:
         print(f"timeout: {e}", file=sys.stderr)
         sys.exit(4)
+    except ValueError as e:
+        print(f"invalid argument: {e}", file=sys.stderr)
+        sys.exit(2)
 
 
 if __name__ == "__main__":

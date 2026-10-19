@@ -1,4 +1,5 @@
 import unittest
+import threading
 from types import SimpleNamespace
 from unittest.mock import patch
 
@@ -74,6 +75,40 @@ class Response:
 
 
 class MuseTransportTests(unittest.TestCase):
+    def test_outbound_transport_chunks_reassemble_exactly(self):
+        for size in (0, 100, 65480, 65489, 700000):
+            with self.subTest(size=size):
+                gateway = Gateway.__new__(Gateway)
+                sent = []
+                gateway.ws = SimpleNamespace(send_bytes=sent.append)
+                gateway.noise = SimpleNamespace(encrypt=lambda payload: payload)
+                gateway._send_lock = threading.Lock()
+                original = b"x" * size
+                gateway._send_envelope(0, original)
+                frames = []
+                for payload in sent:
+                    frame = muse.NoiseTransportFrame()
+                    frame.ParseFromString(payload)
+                    frames.append(frame)
+                    self.assertLessEqual(len(payload) + 16, 65535)
+                    self.assertLessEqual(len(frame.payload), 65489)
+                self.assertEqual([f.chunk_index for f in frames], list(range(len(frames))))
+                self.assertEqual({f.total_chunks for f in frames}, {len(frames)})
+                self.assertEqual(len({f.chunk_id for f in frames}), 1)
+                outer = muse.ServiceRequest()
+                outer.ParseFromString(b"".join(f.payload for f in frames))
+                self.assertEqual(outer.payload, original)
+                self.assertEqual(outer.service, 0)
+
+    def test_oversized_transport_does_not_send_partial_request(self):
+        gateway = Gateway.__new__(Gateway)
+        sent = []
+        gateway.ws = SimpleNamespace(send_bytes=sent.append)
+        gateway._send_lock = threading.Lock()
+        with self.assertRaisesRegex(ValueError, "256"):
+            gateway._send_envelope(0, b"x" * (65489 * 256))
+        self.assertEqual(sent, [])
+
     def test_noise_xx_initialization_order(self):
         events = []
         noise_factory = NoiseFactory(events)

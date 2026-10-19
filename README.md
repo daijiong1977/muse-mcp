@@ -86,13 +86,15 @@ entry is:
   Muse identity, session count, and unread state.
 - **`muse_threads(include_archived=false)`** — persistent side chats with
   `session_id`, title, pinned/archived flags, and update metadata.
-- **`muse_send(message, thread?, wait_seconds?, fire_and_forget?)`** — sends
+- **`muse_send(message, thread?, wait_seconds?, fire_and_forget?, images?)`** — sends
   arbitrary natural-language instructions to the main chat or selected side
   chat. `thread` can be a session ID or an optional alias in the existing
   `~/.config/muse-cli/config.json`, for example
   `"aliases": {"instacart": "session-id-1"}`. Replies are found by scoped
   history polling, not by assuming the live stream shape. A timeout returns a
   structured `TIMEOUT` result while confirming that the message was sent.
+  `images` attaches local PNG, JPEG, GIF, or WebP files, in array order,
+  alongside the text. Paths refer to the machine running the MCP server.
 - **`muse_history(thread?, limit=20, raw=false)`** — returns event sequence,
   event type, role, message ID, reply relationship, text, timestamp, and the
   redacted raw event metadata. `raw=true` preserves the gateway response.
@@ -111,6 +113,49 @@ All errors use structured codes such as `AUTH_REQUIRED`, `VM_UNAVAILABLE`,
 `TIMEOUT`, `INVALID_THREAD`, `UNKNOWN_ROUTE`, `RAW_DISABLED`, and
 `GATEWAY_ERROR`. Authentication errors explain how to run
 `muse-mcp auth export` without exposing cookies or tokens.
+
+## Send local images (CLI or MCP)
+
+The CLI accepts repeatable `--image` options:
+
+```bash
+muse-mcp send "Describe this picture" --image /absolute/path/reference.png --wait 90
+muse-mcp send "Compare these images" --image ./first.jpg --image ./second.webp --thread SESSION_ID
+muse-mcp send --image ./reference.png --wait 90
+```
+
+For MCP, call the existing `muse_send` tool:
+
+```json
+{
+  "message": "Use these reference images to describe the character and setting.",
+  "images": ["/absolute/path/character.png", "/absolute/path/setting.jpg"],
+  "wait_seconds": 90
+}
+```
+
+Supply up to 10 images with a combined size of at most 10 MiB before Base64
+encoding. This is the client's limit, not a claim about Muse's general upload
+limits. Image MIME types are detected from file signatures; files are sent
+without resizing or conversion, and Muse performs decoding. URLs, documents,
+and video attachments are not supported by this option. An empty `message`
+is allowed when images are supplied.
+
+Images are encoded inline in `chat.stream`, using the same image item shape
+as the Muse web client. No browser or separate public file hosting is required.
+Validation completes before opening a gateway or sending a message. Encoded
+image data is not included in send results or validation errors. Sending an
+image acts as your Muse account and may use its allowance.
+
+For a named CLI profile, set the compatible configuration directory explicitly:
+
+```bash
+MUSE_CONFIG_DIR="$HOME/.config/muse-cli/profiles/PROFILE_NAME" muse-mcp send "Describe this" --image ./reference.png
+```
+
+This feature is in this repository's `muse-mcp` command. A separately installed
+upstream `muse-cli` or custom `muse-profile` wrapper does not automatically gain
+the `--image` option. Text-only calls and existing thread behavior are preserved.
 
 Conceptually, a calling agent can select a configured side chat and delegate:
 

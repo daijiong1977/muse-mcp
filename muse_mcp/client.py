@@ -12,6 +12,7 @@ from cli import is_reply
 from muse import AuthError, Gateway, GatewayError, ROUTES, VMUnavailableError, load_cookies
 
 from .config import load_config, resolve_thread
+from .attachments import build_message_items
 
 
 _SECRET_KEY = re.compile(
@@ -240,15 +241,19 @@ class MuseClient:
         thread: Optional[str] = None,
         wait_seconds: Optional[float] = 90,
         fire_and_forget: bool = False,
+        images: Optional[List[str]] = None,
     ) -> Any:
+        try:
+            items = build_message_items(message, images)
+        except ValueError as exc:
+            return _error("INVALID_ARGUMENT", str(exc))
+
         def operation(gateway: Any, config: Dict[str, Any]) -> Dict[str, Any]:
             resolved = resolve_thread(config, thread)
-            if not isinstance(message, str) or not message.strip():
-                raise MCPInputError("message must be a non-empty string")
             if wait_seconds is not None and (not isinstance(wait_seconds, (int, float)) or isinstance(wait_seconds, bool) or wait_seconds < 0):
                 raise MCPInputError("wait_seconds must be non-negative or null")
             params: Dict[str, Any] = {
-                "items": [{"type": "text", "text": message}],
+                "items": items,
                 "node_id": config["node_id"],
                 "capabilities": {},
             }

@@ -204,11 +204,21 @@ class Gateway:
     # -- low-level framing -------------------------------------------------
     def _send_envelope(self, service_id, frame_bytes):
         outer = ServiceRequest(service=service_id, payload=frame_bytes)
+        payload = outer.SerializeToString()
+        # Match the web client's NoiseTransport: each encrypted frame remains
+        # within 65,535 bytes, with room for protobuf framing and the AEAD tag.
+        chunk_size = 65489
+        total = max(1, (len(payload) + chunk_size - 1) // chunk_size)
+        if total > 256:
+            raise ValueError("Request exceeds the gateway's 256 transport chunk limit")
         chunk_id = struct.unpack("<q", os.urandom(8))[0]
-        fr = NoiseTransportFrame(chunk_id=chunk_id, chunk_index=0, total_chunks=1,
-                                 payload=outer.SerializeToString())
         with self._send_lock:
-            self.ws.send_bytes(bytes(self.noise.encrypt(fr.SerializeToString())))
+            for index in range(total):
+                start = index * chunk_size
+                fr = NoiseTransportFrame(chunk_id=chunk_id, chunk_index=index,
+                                         total_chunks=total,
+                                         payload=payload[start:start + chunk_size])
+                self.ws.send_bytes(bytes(self.noise.encrypt(fr.SerializeToString())))
 
     def _read_frame(self):
         # Serialized so two threads can never interleave ws.recv / Noise

@@ -55,6 +55,72 @@ Manual Netscape or `name=value; ...` cookie files are also supported if they
 contain `hatch_sess`. The export helper uses `agent-browser` to read the active
 logged-in Chrome session.
 
+## Refresh a Linux login from your Mac with one command
+
+`muse-refresh-linux` checks the selected Linux profile over SSH first. If
+authentication and its gateway work, it exits without using a browser. For an
+expired login (HTTP 401), it reads the currently logged-in Muse session from
+ego(lite) or Chrome, checks the account ID, transfers a private temporary cookie file over
+SSH, and calls the existing server profile importer. The importer checks the
+new account and gateway before saving it and backs up the old profile.
+
+Create a private `~/.config/muse-refresh-linux/config.json` on the machine
+running the browser (substitute your own host, SSH key, and existing profile):
+
+```json
+{
+  "host": "user@example.org",
+  "identity_file": "/Users/me/.ssh/server_key",
+  "remote_python": "/home/user/.local/share/uv/tools/muse-cli/bin/python",
+  "profile": "primary-demo",
+  "default_login_profile": "primary-demo",
+  "browser": "ego"
+}
+```
+
+```bash
+chmod 600 ~/.config/muse-refresh-linux/config.json
+muse-refresh-linux
+muse-refresh-linux another-profile
+muse-refresh-linux --force
+muse-refresh-linux --browser chrome --force
+```
+
+The server must already have the compatible `muse-profile` helper installed.
+`default_login_profile` is optional: it selects the one profile whose refresh
+also updates the unqualified `muse-cli` login. That update is allowed only
+when the default and selected profile have identical old cookie files, so
+another account's default cannot be silently replaced. Default files are
+backed up separately. Omit this setting to refresh named profiles only.
+
+`--force` tests the export/import path even when the Linux login already works.
+With `browser: "ego"`, install ego(lite), complete onboarding, sign into the
+intended Muse account, and keep the app running. The helper reads Muse in a
+background TaskSpace and closes its task tabs afterward; it does not import
+the entire Chrome profile or need Chrome's remote-debugging permission. If the
+login is missing or wrong, it hands the Space to you for sign-in and stops.
+After signing in, rerun with the printed `--resume-ego SPACE_ID` option to
+resume that same Space (add `--force` if the server login still works).
+
+With `browser: "chrome"` (the default when omitted), Chrome must be running
+with one Muse tab in the intended instance, Muse signed in, and remote debugging
+allowed. Wrong accounts are rejected before upload. The local default Muse CLI/MCP credentials are not
+changed, and temporary local cookie files are removed when the command exits.
+The remote staging file is removed after import, with a best-effort cleanup
+if the SSH connection fails; a file left by a dropped connection remains private.
+Chrome may display **Allow remote debugging?** on connection, especially after
+a restart. Approve it manually; the helper does not disable that safeguard.
+The exporter reuses a named agent-browser session instead of creating a new
+session for every command.
+
+This command reuses an existing browser login. It does not store passwords,
+bypass a fresh login/2FA, or guarantee that a revoked browser session can be
+renewed without a person. A headless browser or ego(lite) can retain browser
+state, but does not remove those authentication requirements. Use the explicit
+browser setting to select the source. For a Linux-only invocation to use a
+browser on another computer, it would also need authorized access back to that
+computer; this command normally runs on the Mac that owns the browser.
+
 ## Run the MCP server
 
 The default transport is local stdio; there is no listening network socket:

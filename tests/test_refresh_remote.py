@@ -82,6 +82,13 @@ class RemoteRefreshTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout.getvalue()), {"healthy": False, "account_id": "123"})
         self.fake_gateway.Gateway.assert_not_called()
 
+    def test_inventory_lists_identities_without_reading_cookies(self):
+        (self.root / "profiles/alias").symlink_to(self.profile)
+        with patch.object(sys, "argv", ["refresh", "list", "inventory"]), redirect_stdout(io.StringIO()) as stdout:
+            main()
+        self.assertEqual(json.loads(stdout.getvalue()), {"profiles": [{"name": "primary-demo", "account_id": "123"}]})
+        self.fake_gateway.Gateway.assert_not_called()
+
 
 if __name__ == "__main__":
     unittest.main()

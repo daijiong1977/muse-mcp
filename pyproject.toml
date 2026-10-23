@@ -17,6 +17,7 @@ dependencies = [
 [project.scripts]
 muse-mcp = "muse_mcp.cli:main"
 muse-refresh-linux = "muse_mcp.refresh:main"
+muse-refresh = "muse_mcp.refresh:main"
 
 [tool.setuptools]
 packages = ["muse_mcp"]

@@ -16,9 +16,17 @@ def main():
     from muse_cli.gateway import Gateway, _hatch_headers, load_cookies
 
     action, name, *args = sys.argv[1:]
+    root = Path.home() / ".config/muse-cli"
+    if action == "list":
+        profiles = []
+        for directory in sorted((root / "profiles").iterdir()):
+            if directory.is_dir() and not directory.is_symlink() and (directory / "metadata.json").is_file():
+                metadata = json.loads((directory / "metadata.json").read_text())
+                profiles.append({"name": directory.name, "account_id": str(metadata["account_id"])})
+        print(json.dumps({"profiles": profiles}))
+        return
     if not re.fullmatch(r"[a-z][a-z0-9_-]{0,47}", name):
         raise ValueError("Invalid profile name")
-    root = Path.home() / ".config/muse-cli"
     if action == "cleanup" and len(args) == 1:
         if not re.fullmatch(r"cookies\.refresh-[a-f0-9]{32}", args[0]):
             raise ValueError("Invalid staging filename")

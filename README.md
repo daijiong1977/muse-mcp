@@ -55,7 +55,46 @@ Manual Netscape or `name=value; ...` cookie files are also supported if they
 contain `hatch_sess`. The export helper uses `agent-browser` to read the active
 logged-in Chrome session.
 
-## Refresh a Linux login from your Mac with one command
+## Match browser profiles and refresh saved accounts
+
+`muse-refresh` is the general command; `muse-refresh-linux` remains a compatible
+alias. Run these on the Mac that owns your ego(lite) browser:
+
+```bash
+muse-refresh --match-profiles
+muse-refresh --list
+muse-refresh --all
+muse-refresh secondary --force
+```
+
+`--match-profiles` reads existing named Muse profiles on Linux and on this Mac,
+checks the Muse account ID in each Ego browser profile, and saves the matching
+`ego_profile_id` plus an explicit `linux` or `local` destination. It does not
+export cookies during discovery, create new destination accounts, or infer an
+identity from a browser profile name. An account already designated local stays
+local. All known destinations must match before the mapping is saved; missing
+sign-ins leave the old configuration intact. Matching backs up the config.
+
+If multiple signed-in Ego profiles contain the same Muse account, a still-valid
+previous binding is retained; otherwise the default Ego profile is preferred,
+then a deterministic profile-ID order. Unauthenticated or unrelated browser
+profiles are ignored. Run matching again after adding/importing browser profiles.
+
+`--all` checks each saved mapping and refreshes only expired sessions. Add
+`--force` to export/import every mapped account for a full test. One failed
+account is reported without preventing the remaining accounts from being checked;
+the batch exits nonzero if any failed. `--list` shows names, IDs, browser bindings,
+and destinations without connecting or reading cookies.
+
+Each export creates its TaskSpace in that account's exact Ego profile, rather
+than whichever browser profile is currently in front. Account IDs are checked
+again against the destination and exported cookie before any import. A local
+account is imported locally, never sent over SSH, and its default CLI login is
+left unchanged. Linux's optional default-login refresh remains restricted to
+`default_login_profile`. To resume a handed-off login, name the individual
+account with `--resume-ego SPACE_ID`; a whole batch cannot share one resume ID.
+
+### Configure and use one account
 
 `muse-refresh-linux` checks the selected Linux profile over SSH first. If
 authentication and its gateway work, it exits without using a browser. For an
@@ -86,7 +125,10 @@ muse-refresh-linux --force
 muse-refresh-linux --browser chrome --force
 ```
 
-The server must already have the compatible `muse-profile` helper installed.
+Each destination must already have the compatible `muse-profile` helper and
+upstream muse-cli Python environment installed. Local destinations use
+`~/.local/share/uv/tools/muse-cli/bin/python`, or the optional `local_python`
+configuration override. Linux uses `remote_python` from the configuration.
 `default_login_profile` is optional: it selects the one profile whose refresh
 also updates the unqualified `muse-cli` login. That update is allowed only
 when the default and selected profile have identical old cookie files, so
@@ -104,8 +146,10 @@ resume that same Space (add `--force` if the server login still works).
 
 With `browser: "chrome"` (the default when omitted), Chrome must be running
 with one Muse tab in the intended instance, Muse signed in, and remote debugging
-allowed. Wrong accounts are rejected before upload. The local default Muse CLI/MCP credentials are not
-changed, and temporary local cookie files are removed when the command exits.
+allowed. Wrong accounts are rejected before upload. Linux refreshes do not
+change the Mac's saved profiles; a local refresh updates only the explicitly
+mapped local profile. The Mac's unqualified default login is preserved.
+Temporary local cookie files are removed when the command exits.
 The remote staging file is removed after import, with a best-effort cleanup
 if the SSH connection fails; a file left by a dropped connection remains private.
 Chrome may display **Allow remote debugging?** on connection, especially after

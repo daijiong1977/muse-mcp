@@ -352,7 +352,12 @@ def refresh_profile(config, name, force=False, browser_override=None, resume_spa
         return profile_operation(config, target, action, name, *extra)
 
     check = operation("check")
-    if binding and str(check["account_id"]) != binding["account_id"]:
+    if binding and check.get("account_id") is not None and str(check["account_id"]) != binding["account_id"]:
+        raise RefreshError("Saved destination identity differs from its mapping; nothing was exported")
+    if check.get("asleep"):
+        return {"profile": name, "healthy": None, "asleep": True,
+                "note": "Muse machine asleep (502); login not checked; keepalive wakes it"}
+    if binding and "account_id" not in check:
         raise RefreshError("Saved destination identity differs from its mapping; nothing was exported")
     if check.get("healthy") and not force:
         return {"profile": name, "target": target, "account_id": check["account_id"],

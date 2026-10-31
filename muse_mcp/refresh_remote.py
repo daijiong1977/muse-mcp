@@ -40,19 +40,28 @@ def main():
     expected = str(metadata["account_id"])
     cookie = directory / "cookies.txt"
     if action == "check":
-        response = requests.post(
-            "https://muse.ai/api/auth/check", headers=_hatch_headers(load_cookies(str(cookie))),
-            data=b"", impersonate="chrome", timeout=20,
-        )
-        if response.status_code == 401:
-            print(json.dumps({"healthy": False, "account_id": expected}))
-            return
-        if response.status_code != 200:
-            raise RuntimeError(f"Authentication check returned HTTP {response.status_code}; not refreshing")
-        if str(response.json().get("viewer_id")) != expected:
-            raise ValueError("Saved session does not match the profile identity")
-        gateway = Gateway(load_cookies(str(cookie)))
-        gateway.close()
+        try:
+            response = requests.post(
+                "https://muse.ai/api/auth/check", headers=_hatch_headers(load_cookies(str(cookie))),
+                data=b"", impersonate="chrome", timeout=20,
+            )
+            if response.status_code in (502, 503, 504):
+                print(json.dumps({"asleep": True, "account_id": expected}))
+                return
+            if response.status_code == 401:
+                print(json.dumps({"healthy": False, "account_id": expected}))
+                return
+            if response.status_code != 200:
+                raise RuntimeError(f"Authentication check returned HTTP {response.status_code}; not refreshing")
+            if str(response.json().get("viewer_id")) != expected:
+                raise ValueError("Saved session does not match the profile identity")
+            gateway = Gateway(load_cookies(str(cookie)))
+            gateway.close()
+        except requests.errors.CurlError as error:
+            if any(marker in str(error) for marker in ("502", "503", "504", "WebSocket upgrade")):
+                print(json.dumps({"asleep": True, "account_id": expected}))
+                return
+            raise
         print(json.dumps({"healthy": True, "account_id": expected}))
         return
     if action != "apply" or len(args) != 2:

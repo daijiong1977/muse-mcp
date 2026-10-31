@@ -33,6 +33,28 @@ class RefreshTests(unittest.TestCase):
         export.assert_not_called()
         copy.assert_not_called()
 
+    def test_asleep_does_not_export_even_when_forced(self):
+        for force in ([], ["--force"]):
+            with self.subTest(force=force), \
+                    patch("muse_mcp.refresh.run_json", return_value={"asleep": True, "account_id": "123"}) as remote, \
+                    patch("muse_mcp.refresh.export_ego") as ego, \
+                    patch("muse_mcp.refresh.export_chrome") as chrome, \
+                    patch("muse_mcp.refresh.subprocess.run") as copy, redirect_stdout(io.StringIO()) as stdout:
+                self.assertEqual(main(["--config", str(self.config), "--browser", "ego", *force]), 0)
+            self.assertEqual(json.loads(stdout.getvalue()), {"profile": "primary-demo", "healthy": None,
+                             "asleep": True, "note": "Muse machine asleep (502); login not checked; keepalive wakes it"})
+            self.assertEqual(remote.call_count, 1)
+            ego.assert_not_called()
+            chrome.assert_not_called()
+            copy.assert_not_called()
+
+    def test_remote_failure_still_fails_without_export(self):
+        with patch("muse_mcp.refresh.run_json", side_effect=RefreshError("Connection/export failed")), \
+                patch("muse_mcp.refresh.export_ego") as ego, redirect_stderr(io.StringIO()) as stderr:
+            self.assertEqual(main(["--config", str(self.config), "--browser", "ego"]), 1)
+        self.assertIn("Connection/export failed", stderr.getvalue())
+        ego.assert_not_called()
+
     def test_force_refresh_checks_identity_before_copy_and_cleans_local_file(self):
         observed = []
         def export(path, expected):

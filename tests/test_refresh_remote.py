@@ -82,6 +82,33 @@ class RemoteRefreshTests(unittest.TestCase):
         self.assertEqual(json.loads(stdout.getvalue()), {"healthy": False, "account_id": "123"})
         self.fake_gateway.Gateway.assert_not_called()
 
+    def test_gateway_unavailable_is_asleep(self):
+        from curl_cffi.requests.errors import CurlError
+        response = SimpleNamespace(status_code=200, json=lambda: {"viewer_id": "123"})
+        for message in ("Refused WebSocket upgrade: 502", "503", "504", "WebSocket upgrade"):
+            with self.subTest(message=message), patch.object(sys, "argv", ["refresh", "check", "primary-demo"]), \
+                    patch("curl_cffi.requests.post", return_value=response), \
+                    patch.object(self.fake_gateway, "Gateway", side_effect=CurlError(message)), redirect_stdout(io.StringIO()) as stdout:
+                main()
+            self.assertEqual(json.loads(stdout.getvalue()), {"asleep": True, "account_id": "123"})
+
+    def test_http_unavailable_is_asleep(self):
+        for status in (502, 503, 504):
+            with self.subTest(status=status), patch.object(sys, "argv", ["refresh", "check", "primary-demo"]), \
+                    patch("curl_cffi.requests.post", return_value=SimpleNamespace(status_code=status)), redirect_stdout(io.StringIO()) as stdout:
+                main()
+            self.assertEqual(json.loads(stdout.getvalue()), {"asleep": True, "account_id": "123"})
+
+    def test_other_errors_still_fail(self):
+        from curl_cffi.requests.errors import CurlError
+        for error in (CurlError("connection failed"),):
+            with patch.object(sys, "argv", ["refresh", "check", "primary-demo"]), \
+                    patch("curl_cffi.requests.post", side_effect=error), self.assertRaises(CurlError):
+                main()
+        with patch.object(sys, "argv", ["refresh", "check", "primary-demo"]), \
+                patch("curl_cffi.requests.post", return_value=SimpleNamespace(status_code=403)), self.assertRaises(RuntimeError):
+            main()
+
     def test_inventory_lists_identities_without_reading_cookies(self):
         (self.root / "profiles/alias").symlink_to(self.profile)
         with patch.object(sys, "argv", ["refresh", "list", "inventory"]), redirect_stdout(io.StringIO()) as stdout:

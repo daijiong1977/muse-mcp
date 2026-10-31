@@ -129,3 +129,152 @@ class RefreshTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+class EgoScriptTests(unittest.TestCase):
+    def test_builder_guards_and_escaping(self):
+        from muse_mcp.refresh import build_ego_script
+        script = build_ego_script('/tmp/export', '123', 'a"space', 7, 'profile', 'a@example.org')
+        for guard in ('await listTaskSpaces()', 'space.name === "a\\"space"',
+                      'takeOverTaskSpace(existing.id)', "task.userPage() || task.page('p1')",
+                      'matches.length === 1', "identity.accountId !== \"123\"",
+                      'one-time-code', 'captcha', '45000', '"a@example.org"'):
+            self.assertIn(guard, script)
+        self.assertIn("fields.join('\\t')", script)
+        self.assertIn("lines.join('\\n')", script)
+        self.assertNotIn('.fill(', script)
+        self.assertNotIn('.type(', script)
+
+    def test_email_mapping_preserved_and_validated(self):
+        from muse_mcp.refresh import match_accounts, validate_accounts
+        old = {'demo': {'account_id': '123', 'target': 'local', 'ego_profile_id': 'p', 'email': 'a@example.org'}}
+        targets = [{'name': 'demo', 'account_id': '123', 'target': 'local'}]
+        found = [{'httpStatus': 200, 'accountId': '123', 'egoProfileId': 'p', 'egoProfileName': 'P'}]
+        self.assertEqual(match_accounts(targets, found, old)['demo']['email'], 'a@example.org')
+        old['demo']['email'] = 42
+        with self.assertRaises(RefreshError):
+            validate_accounts(old)
+
+    def run_fake_ego(self, scenario):
+        import shutil
+        import subprocess
+        from muse_mcp.refresh import build_ego_script
+        node = shutil.which('node')
+        if not node:
+            self.skipTest('Node is unavailable')
+        harness = r'''const scenario = SCENARIO;
+let clicks = [], created = 0, reused = 0, p1 = 0, handed = 0;
+const visible = {offsetWidth: 1, offsetHeight: 1, getClientRects: () => [1]};
+const makeButtons = labels => labels.map(label => ({...visible, innerText: label,
+  getAttribute: key => key === 'aria-label' ? label : null,
+  click: () => {
+    clicks.push(label);
+    if (scenario.provider) location.hostname = scenario.provider;
+  }}));
+const buttons = makeButtons(scenario.buttons || []);
+const continues = makeButtons(['Continue as Example']);
+globalThis.location = {hostname: 'muse.ai'};
+const fields = (scenario.fields || []).map(field => ({...visible, tagName: 'INPUT', type: 'text', ...field,
+  getClientRects: () => field.type === 'hidden' ? [] : [1]}));
+globalThis.document = {get body() {return {innerText: clicks.length ? scenario.text || '' : ''}},
+  getElementById: () => null,
+  querySelectorAll: selector => {
+    if (selector === 'input' || selector === 'input, textarea, [contenteditable]') {
+      if (!clicks.length) return [];
+      return scenario.challenge ? [{...visible, tagName: 'INPUT', type: 'password'}] : fields;
+    }
+    return scenario.provider && clicks.length ? continues : buttons;
+  }};
+globalThis.fetch = async () => ({status: scenario.initial || (clicks.length >= (scenario.provider ? 2 : 1) ? 200 : 401),
+  json: async () => ({viewer_id: scenario.wrong && clicks.length ? '999' : '123'})});
+globalThis.setTimeout = fn => fn();
+const fakePage = {label: 'p1', goto: async () => {location.hostname = 'muse.ai'}, evaluate: async (fn, arg) => fn(arg)};
+const fakeTask = {spaceId: 7, userPage: () => undefined, page: () => {p1++; return fakePage},
+  handOff: async () => {handed++}, finish: async () => {}};
+const listTaskSpaces = async () => scenario.existing ? [{name: 'space', id: 7}] : [];
+const takeOverTaskSpace = async () => {reused++; return fakeTask};
+const taskSpace = async () => {created++; return fakeTask};
+'''
+        script = build_ego_script('/tmp/unused', '123', 'space', 7 if scenario.get('resume') else None,
+                                  'profile', scenario.get('email'))
+        # Exercise all control flow but replace the private file export with a fake.
+        script = script[:script.index("  const response = await page.cdp")] + "  console.log(JSON.stringify({ready: true, autoLogin, step}));\n}\n"
+        script += "console.log(JSON.stringify({clicks, created, reused, p1, handed}));\n"
+        source = harness.replace('SCENARIO', json.dumps(scenario)) + script
+        result = subprocess.run([node, '--input-type=module'], input=source, text=True, capture_output=True, timeout=5, check=True)
+        return [json.loads(line) for line in result.stdout.splitlines()]
+
+    def test_flow_with_fake_ego(self):
+        scenarios = [
+            ({'initial': 200}, 'not_needed', 0, True),
+            ({'buttons': ['Log in as a@example.org']}, 'clicked', 1, True),
+            ({'buttons': ['Log in as a@example.org', 'Log in as b@example.org']}, 'handed_off', 0, False),
+            ({'buttons': ['Log in as a@example.org', 'Log in as b@example.org'], 'email': 'b@example.org'}, 'clicked', 1, True),
+            ({'buttons': ['Log in as a@example.org'], 'challenge': True}, 'handed_off', 1, False),
+            ({'buttons': ['Log in as a@example.org'], 'wrong': True}, 'handed_off', 1, False),
+            ({'initial': 200, 'existing': True}, 'not_needed', 0, True),
+            ({'initial': 200, 'resume': True}, 'not_needed', 0, True),
+        ]
+        for scenario, expected, count, ready in scenarios:
+            with self.subTest(scenario=scenario):
+                outcome, stats = self.run_fake_ego(scenario)
+                self.assertEqual((outcome['autoLogin'], outcome['ready']), (expected, ready))
+                self.assertEqual(len(stats['clicks']), count)
+                self.assertEqual(stats['handed'], int(not ready))
+                self.assertEqual(stats['p1'], 1)
+                if scenario.get('email'):
+                    self.assertEqual(stats['clicks'], ['Log in as b@example.org'])
+                if scenario.get('existing') or scenario.get('resume'):
+                    self.assertEqual((stats['created'], stats['reused']), (0, 1))
+
+    def test_security_code_text_input_hands_off_without_continue(self):
+        outcome, stats = self.run_fake_ego({
+            'buttons': ['Log in as a@example.org'], 'provider': 'www.facebook.com',
+            'text': 'Enter your security code', 'fields': [{'type': 'text'}],
+        })
+        self.assertEqual((outcome['autoLogin'], outcome['step']), ('handed_off', 'challenge'))
+        self.assertFalse(outcome['ready'])
+        self.assertEqual(stats['handed'], 1)
+        self.assertEqual(stats['clicks'], ['Log in as a@example.org'])
+
+    def test_meta_continue_without_editable_fields_is_clicked(self):
+        outcome, stats = self.run_fake_ego({
+            'buttons': ['Log in as a@example.org'], 'provider': 'auth.meta.com',
+            'text': 'Continue as Example',
+        })
+        self.assertTrue(outcome['ready'])
+        self.assertEqual(stats['handed'], 0)
+        self.assertEqual(stats['clicks'], ['Log in as a@example.org', 'Continue as Example'])
+
+    def test_hidden_input_only_is_not_a_challenge(self):
+        outcome, stats = self.run_fake_ego({
+            'buttons': ['Log in as a@example.org'], 'provider': 'www.facebook.com',
+            'fields': [{'type': 'hidden', 'offsetWidth': 0, 'offsetHeight': 0}],
+        })
+        self.assertTrue(outcome['ready'])
+        self.assertEqual(stats['handed'], 0)
+        self.assertEqual(stats['clicks'], ['Log in as a@example.org', 'Continue as Example'])
+
+    def test_external_editable_fields_and_challenge_text_each_hand_off(self):
+        cases = [{'fields': [field]} for field in (
+            {'type': 'text'}, {'type': 'email'}, {'type': 'number'},
+            {'tagName': 'TEXTAREA'}, {'tagName': 'DIV', 'isContentEditable': True},
+        )] + [{'text': text} for text in (
+            'Password', 'Passcode', 'Security code', 'Verification code',
+            'Confirm your identity', 'Enter your code', 'Two-factor',
+            'Two factor', 'CAPTCHA', '2FA', 'Authentication',
+        )]
+        for case in cases:
+            with self.subTest(case=case):
+                outcome, stats = self.run_fake_ego({
+                    'buttons': ['Log in as a@example.org'], 'provider': 'www.facebook.com', **case,
+                })
+                self.assertEqual((outcome['autoLogin'], outcome['step']), ('handed_off', 'challenge'))
+                self.assertEqual(stats['clicks'], ['Log in as a@example.org'])
+
+    def test_muse_keeps_existing_challenge_rule(self):
+        outcome, stats = self.run_fake_ego({
+            'buttons': ['Log in as a@example.org'],
+            'fields': [{'type': 'text'}], 'text': 'Enter your security code',
+        })
+        self.assertTrue(outcome['ready'])
+        self.assertEqual(stats['handed'], 0)

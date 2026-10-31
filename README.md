@@ -84,9 +84,11 @@ profiles are ignored. Run matching again after adding/importing browser profiles
 `--force` to export/import every mapped account for a full test. One failed
 account is reported without preventing the remaining accounts from being checked;
 the batch exits nonzero if any failed. `--list` shows names, IDs, browser bindings,
-and destinations without connecting or reading cookies.
+and destinations without connecting or reading cookies. An optional `email` in an
+account binding selects its exact remembered-account button; matching preserves
+existing emails for the same account and never infers them.
 
-Each export creates its TaskSpace in that account's exact Ego profile, rather
+Each export creates or reuses its named TaskSpace in that account's Ego profile, rather
 than whichever browser profile is currently in front. Account IDs are checked
 again against the destination and exported cookie before any import. A local
 account is imported locally, never sent over SSH, and its default CLI login is
@@ -140,7 +142,10 @@ With `browser: "ego"`, install ego(lite), complete onboarding, sign into the
 intended Muse account, and keep the app running. The helper reads Muse in a
 background TaskSpace and closes its task tabs afterward; it does not import
 the entire Chrome profile or need Chrome's remote-debugging permission. If the
-login is missing or wrong, it hands the Space to you for sign-in and stops.
+login is missing, it can sign in automatically using a remembered account and
+one optional Meta confirmation. It never types credentials. If Muse asks for a
+password, a code, CAPTCHA, or 2FA, or the remembered account is ambiguous or
+wrong, it hands the Space to you and stops.
 After signing in, rerun with the printed `--resume-ego SPACE_ID` option to
 resume that same Space (add `--force` if the server login still works).
 
